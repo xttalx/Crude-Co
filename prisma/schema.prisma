@@ -1,0 +1,361 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  owner
+  admin
+  member
+  accountant
+}
+
+enum ExpenseSource {
+  manual
+  recurring
+  receipt_scan
+  import
+}
+
+enum DeductibilityStatus {
+  deductible
+  partial
+  non_deductible
+  unknown
+}
+
+enum ExportFormat {
+  csv
+  xlsx
+}
+
+enum ExportStatus {
+  queued
+  running
+  done
+  failed
+}
+
+enum AiSuggestionType {
+  category
+  vendor
+  deductibility
+  anomaly
+}
+
+enum AuditEntityType {
+  user
+  organization
+  expense
+  receipt
+  recurring_expense
+  export
+  tax_rule_pack
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String?
+  jobType      String?
+  city         String?
+  country      String?
+  createdAt    DateTime     @default(now())
+  lastLoginAt  DateTime?
+
+  memberships  Membership[]
+  expenses     Expense[]    @relation("ExpenseCreatedBy")
+  exports      Export[]     @relation("ExportRequestedBy")
+  auditEvents  AuditEvent[] @relation("AuditActor")
+}
+
+model Organization {
+  id              String           @id @default(cuid())
+  name            String
+  defaultCurrency String           @default("USD")
+  createdAt       DateTime         @default(now())
+
+  memberships     Membership[]
+  businessProfile BusinessProfile?
+  orgJurisdictions OrgJurisdiction[]
+
+  vendors         Vendor[]
+  paymentMethods  PaymentMethod[]
+  categories      ExpenseCategory[]
+  expenses        Expense[]
+  receipts        Receipt[]
+  recurring       RecurringExpense[]
+  exports         Export[]
+  auditEvents     AuditEvent[]
+  aiSuggestions   AiSuggestion[]
+  deductionRules  DeductionRule[]
+}
+
+model DeductionRule {
+  id                         String   @id @default(cuid())
+  orgId                      String
+  categoryId                 String   @unique
+  deductiblePercent          Int      @default(100)
+  reimbursementEligible      Boolean  @default(true)
+  receiptRecommended         Boolean  @default(false)
+  businessPurposeRecommended Boolean  @default(false)
+  jurisdictionNotes          String?
+  countryCode                String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  org      Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  category ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model Membership {
+  id        String         @id @default(cuid())
+  orgId     String
+  userId    String
+  role      MembershipRole @default(owner)
+  status    String         @default("active")
+  createdAt DateTime       @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+model BusinessProfile {
+  id            String   @id @default(cuid())
+  orgId         String   @unique
+  businessType  String
+  industryCode  String
+  employeeCount Int      @default(0)
+  settingsJson  Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model Jurisdiction {
+  code     String @id // e.g. "US-CA"
+  country  String
+  region   String
+  currency String
+
+  orgs     OrgJurisdiction[]
+  rulePacks TaxRulePack[]
+}
+
+model OrgJurisdiction {
+  id               String   @id @default(cuid())
+  orgId            String
+  jurisdictionCode String
+  isPrimary        Boolean  @default(false)
+  taxYearStartMonth Int     @default(1)
+  createdAt        DateTime @default(now())
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  jurisdiction Jurisdiction @relation(fields: [jurisdictionCode], references: [code], onDelete: Restrict)
+
+  @@unique([orgId, jurisdictionCode])
+  @@index([jurisdictionCode])
+}
+
+model TaxRulePack {
+  id               String   @id @default(cuid())
+  jurisdictionCode String
+  version          String
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  rulesJson        Json
+  createdAt        DateTime @default(now())
+
+  jurisdiction Jurisdiction @relation(fields: [jurisdictionCode], references: [code], onDelete: Cascade)
+
+  @@unique([jurisdictionCode, version])
+  @@index([jurisdictionCode, effectiveFrom])
+}
+
+model Vendor {
+  id             String   @id @default(cuid())
+  orgId          String
+  name           String
+  normalizedName String?
+  country        String?
+  taxId          String?
+  createdAt      DateTime @default(now())
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+
+  @@index([orgId, name])
+}
+
+model PaymentMethod {
+  id        String   @id @default(cuid())
+  orgId     String
+  type      String   // cash/credit/debit/bank/other
+  label     String
+  last4     String?
+  createdAt DateTime @default(now())
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+
+  @@index([orgId, type])
+}
+
+model ExpenseCategory {
+  id                String   @id @default(cuid())
+  orgId             String
+  jurisdictionCode  String?
+  code              String
+  name              String
+  deductionType     String   // deductible/partial/non_deductible/depends
+  metadataJson      Json?
+  createdAt         DateTime @default(now())
+
+  org             Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expenses        Expense[]
+  deductionRule   DeductionRule?
+
+  @@unique([orgId, code])
+  @@index([orgId, name])
+}
+
+model Expense {
+  id                    String             @id @default(cuid())
+  orgId                 String
+  createdByUserId       String
+  expenseDate           DateTime
+  amountMinor           Int
+  currency              String
+  categoryId            String
+  paymentMethodId       String
+  vendorId              String?
+  description           String?
+  jurisdictionCode      String?
+  source                ExpenseSource      @default(manual)
+  deductibilityStatus   DeductibilityStatus @default(unknown)
+  deductibleAmountMinor Int?
+  nonClaimableAmountMinor Int?
+  taxAmountMinor        Int?
+  taxInclusive          Boolean            @default(true)
+  parsedSnapshotJson    Json?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdByUser User           @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  category      ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  paymentMethod PaymentMethod  @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
+  vendor        Vendor?         @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  receipts      Receipt[]
+  aiSuggestions AiSuggestion[]
+
+  @@index([orgId, expenseDate])
+  @@index([orgId, categoryId])
+}
+
+model Receipt {
+  id              String   @id @default(cuid())
+  orgId           String
+  expenseId       String
+  storageKey      String
+  contentType     String
+  fileSize        Int
+  sha256          String?
+  uploadedAt      DateTime @default(now())
+  extractedJson   Json?
+  confidenceScore Float?
+  ocrStatus       String   @default("none")
+  ocrProvider     String?
+  storageProvider String   @default("local")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expense Expense      @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, expenseId])
+}
+
+model RecurringExpense {
+  id           String   @id @default(cuid())
+  orgId        String
+  templateJson Json
+  schedule     String   // rrule string
+  nextRunAt    DateTime
+  endAt        DateTime?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, nextRunAt])
+}
+
+model Export {
+  id                 String       @id @default(cuid())
+  orgId              String
+  requestedByUserId  String
+  format             ExportFormat
+  jurisdictionCode   String?
+  periodStart        DateTime
+  periodEnd          DateTime
+  status             ExportStatus @default(queued)
+  storageKey         String?
+  createdAt          DateTime     @default(now())
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requestedByUser  User         @relation("ExportRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([orgId, createdAt])
+}
+
+model AiSuggestion {
+  id            String           @id @default(cuid())
+  orgId         String
+  expenseId     String
+  type          AiSuggestionType
+  suggestionJson Json
+  confidence    Float
+  model         String?
+  createdAt     DateTime @default(now())
+  acceptedAt    DateTime?
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expense Expense      @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+}
+
+model AuditEvent {
+  id          String          @id @default(cuid())
+  orgId       String
+  actorUserId String?
+  action      String
+  entityType  AuditEntityType
+  entityId    String
+  diffJson    Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor User?        @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, action])
+}
