@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
-    "@supabase/supabase-js": "^2.105.3",
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.105.4",
     "bcryptjs": "^3.0.3",
     "framer-motion": "^12.38.0",
     "iron-session": "^8.0.4",
