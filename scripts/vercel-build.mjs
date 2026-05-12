@@ -28,21 +28,23 @@ function isSupabaseDirectDbHost(url) {
   return /db\.[^.]+\.supabase\.co\b/i.test(url);
 }
 
-if (process.env.VERCEL === "1" && isSupabaseDirectDbHost(migrateUrl)) {
-  console.error(`
-[spendingtrackerapp] Invalid database URL for Vercel + Supabase
+if (
+  process.env.VERCEL === "1" &&
+  isSupabaseDirectDbHost(migrateUrl) &&
+  process.env.VERCEL_ALLOW_SUPABASE_DIRECT_DB !== "1"
+) {
+  console.warn(`
+[spendingtrackerapp] WARNING: migrate URL uses db.*.supabase.co (direct Postgres).
 
-Your migrate URL points at db.*.supabase.co (direct Postgres). Vercel often cannot
-open TCP connections there (P1001).
+Vercel often cannot reach that host (Prisma P1001). Prefer the Session pooler URI from
+Supabase Dashboard → Connect → "Session pooler" (host *.pooler.supabase.com, port 5432)
+as DATABASE_URL or MIGRATE_DATABASE_URL.
 
-Fix (pick one):
-  • Set DATABASE_URL (or MIGRATE_DATABASE_URL for migrate only) to the Session pooler
-    string from Supabase → Connect → "Session pooler" (host *.pooler.supabase.com, port 5432).
-  • Or enable Supabase "IPv4 add-on" if you must use the direct host.
+If you use Supabase IPv4 add-on and direct host works, set VERCEL_ALLOW_SUPABASE_DIRECT_DB=1
+to hide this warning.
 
 See: https://supabase.com/docs/guides/database/prisma
 `);
-  process.exit(1);
 }
 
 function run(label, cmd, env = process.env) {
